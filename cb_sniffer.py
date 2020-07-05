@@ -1,4 +1,7 @@
+from collections import Counter
 from collections import defaultdict
+from tqdm import tqdm
+
 import pysam
 import logging as logger
 import sys
@@ -74,114 +77,85 @@ class GenomicPosition:
 		:return: two dicts 1) list of all barcodes at given var pos
 		2) dict with ref and alt barcodes
 		"""
-		barcodes = defaultdict(list)  # CB
+		# barcodes = Counter()  # CB
 		# ======================================
-		barUcodes = defaultdict(list)  # UB
-		bar_count = {'ref': [], 'alt': []}  # UB
+		# barUcodes = defaultdict(list)  # UB
+		barUcodes = Counter()
+		bar_count = {'ref': Counter(), 'alt': Counter()}  # UB
 		with pysam.AlignmentFile(bam_fil, 'rb') as pile:
 			logger.info("processing variant: {}\t{}\t{}\t{}\t{}\t{}\t{}".format(
 				self.chrm,self.start, self.end, self.ref, self.alt, self.gene, self.event))
 
 			for pileupcolumn in pile.pileup(reference=self.chrm, start=self.start - 1, end=self.start,
 											truncate=True, stepper="nofilter", max_depth=100000000):
-				for read in pileupcolumn.pileups:
-
-					if read.alignment.has_tag('CB') and read.alignment.has_tag('UB'):
-						if read.alignment.get_tag('CB') not in bar:  # filter reads with only good barcodes
-							continue
-							
-						# print(read.query_position)
-						if indel > 0:
-							# print(int(read.alignment.query_qualities[read.query_position]))
-
-							# print('{}'.format(read.query_position))
-							# if read.query_position == None:
-							# 	continue
-							# if read.alignment.query_qualities[read.query_position + indel + 1] == None:
-							# 	continue
-							if read.is_refskip or \
-							int(read.alignment.mapping_quality) < int(mapq):
+				
+				nseg = pileupcolumn.nsegments
+				with tqdm(total=nseg) as pbar:
+		
+					for read in pileupcolumn.pileups:
+						pbar.update()
+						if read.alignment.has_tag('CB') and read.alignment.has_tag('UB'):
+							if read.alignment.get_tag('CB') not in bar:  # filter reads with only good barcodes
 								continue
-						else:
+								
+							# print(read.query_position)
+							if indel > 0:
+								# print(int(read.alignment.query_qualities[read.query_position]))
 
-							if read.is_del or read.is_refskip or \
-							int(read.alignment.query_qualities[read.query_position]) < int(baseq) or \
-							int(read.alignment.mapping_quality) < int(mapq):
-								continue
+								# print('{}'.format(read.query_position))
+								# if read.query_position == None:
+								# 	continue
+								# if read.alignment.query_qualities[read.query_position + indel + 1] == None:
+								# 	continue
+								if read.is_refskip or \
+								int(read.alignment.mapping_quality) < int(mapq):
+									continue
+							else:
 
-						q_name = read.alignment.query_name
-						q_tag = read.alignment.get_tag('CB')
-						qU_tag = read.alignment.get_tag('UB')
-						qstring = q_tag + ':' + qU_tag
-						barcodes['{}'.format(q_name)].append(q_tag)
-						barUcodes['{}'.format(q_name)].append(qstring)
+								if read.is_del or read.is_refskip or \
+								int(read.alignment.query_qualities[read.query_position]) < int(baseq) or \
+								int(read.alignment.mapping_quality) < int(mapq):
+									continue
 
-						# barcode without mutations
-						if indel > 0:
-							
-							# print('{}:{}:{}:{}:{}:{}'.format(read.indel, read.alignment.get_tag('CB'),read.alignment.cigarstring,
-							# 	read.query_position,self.alt,pileupcolumn.pos))
-							q_name = read.alignment.query_name
+							# q_name = read.alignment.query_name
+							# print("q_name:" + q_name)
 							q_tag = read.alignment.get_tag('CB')
 							qU_tag = read.alignment.get_tag('UB')
 							qstring = q_tag + ':' + qU_tag
-							barcodes['{}'.format(q_name)].append(q_tag)
-							barUcodes['{}'.format(q_name)].append(qstring)
-							if self.alt == '-':
-								if read.alignment.has_tag('CB') and read.query_position == None:
-								# and read.indel == indel and \
-								# 				read.alignment.query_alignment_sequence[read.query_position +
-								# 						1:read.query_position + read.indel + 1] == self.alt:
-									# print('indel length', read.indel)
-									alt_tag = read.alignment.get_tag('CB')
-									# UB
-									altU_tag = read.alignment.get_tag('UB')
-									ustringa = alt_tag + ':' + altU_tag
-									bar_count['alt'].append(ustringa)
-								else:  # ref reads
-									# CB
-									ref_tag = read.alignment.get_tag('CB')
-									# UB
-									refU_tag = read.alignment.get_tag('UB')
-									ustring = ref_tag + ':' + refU_tag
-									bar_count['ref'].append(ustring)
-									# print(ustring)
-									# print('{}\t{}\t{}'.format(ref_tag, refU_tag, 'ref'))
+							# barcodes['{}'.format(q_name)].append(q_tag)
+							# barUcodes['{}'.format(q_name)].append(qstring)
+							barUcodes[qstring] += 1
+							
+							# barcode without mutations
+							if indel > 0:
+								
+								# print('{}:{}:{}:{}:{}:{}'.format(read.indel, read.alignment.get_tag('CB'),read.alignment.cigarstring,
+								# 	read.query_position,self.alt,pileupcolumn.pos))
+								# q_name = read.alignment.query_name
+								# q_tag = read.alignment.get_tag('CB')
+								# qU_tag = read.alignment.get_tag('UB')
+								# qstring = q_tag + ':' + qU_tag
+								# barcodes['{}'.format(q_name)].append(q_tag)
+								# barUcodes['{}'.format(q_name)].append(qstring)
+								if self.alt == '-':
+									if read.alignment.has_tag('CB') and read.query_position == None:
+										bar_count['alt'][qstring] += 1
+									else:  # ref reads									
+										bar_count['ref'][qstring] += 1
+								else:
+									if read.alignment.has_tag('CB') and read.indel == indel and \
+										read.alignment.query_alignment_sequence[read.query_position +
+											1:read.query_position + read.indel + 1] == self.alt:
+										bar_count['alt'][qstring] += 1
+									else:  # ref reads
+										bar_count['ref'][qstring] += 1
 							else:
-								if read.alignment.has_tag('CB') and read.indel == indel and \
-									read.alignment.query_alignment_sequence[read.query_position +
-										1:read.query_position + read.indel + 1] == self.alt:
-									# print('indel length', read.indel)
-									alt_tag = read.alignment.get_tag('CB')
-									# UB
-									altU_tag = read.alignment.get_tag('UB')
-									ustringa = alt_tag + ':' + altU_tag
-									bar_count['alt'].append(ustringa)
-								else:  # ref reads
-									# CB
-									ref_tag = read.alignment.get_tag('CB')
-									# UB
-									refU_tag = read.alignment.get_tag('UB')
-									ustring = ref_tag + ':' + refU_tag
-									bar_count['ref'].append(ustring)
-									# print(ustring)
-									# print('{}\t{}\t{}'.format(ref_tag, refU_tag, 'ref'))
-						else:
-							#print(indel,read.query_position,read.alignment.query_sequence[read.query_position])
-							if read.alignment.query_sequence[read.query_position] != self.alt:
-								ref_tag = read.alignment.get_tag('CB')
-								# UB
-								refU_tag = read.alignment.get_tag('UB')
-								ustring = ref_tag + ':' + refU_tag
-								bar_count['ref'].append(ustring)
-								# print('{}\t{}\t{}'.format(ref_tag, refU_tag, 'ref'))
-							elif read.alignment.query_sequence[read.query_position] == self.alt:
-								# CB
-								alt_tag = read.alignment.get_tag('CB')
-								# UB
-								altU_tag = read.alignment.get_tag('UB')
-								ustringa = alt_tag + ':' + altU_tag
-								bar_count['alt'].append(ustringa)
+								#print(indel,read.query_position,read.alignment.query_sequence[read.query_position])
+								if read.alignment.query_sequence[read.query_position] != self.alt:	
+									bar_count['ref'][qstring] += 1
+								elif read.alignment.query_sequence[read.query_position] == self.alt:								
+									bar_count['alt'][qstring] += 1
+								
 		return barUcodes, bar_count
 
 	def consensus_calling(self,total_barcodes, ub_counts, wt, wu, wc):
@@ -195,59 +169,77 @@ class GenomicPosition:
 		:return: variant information
 
 		"""
-		uniqub_barcodes_raw = set()  # uni depth
-		ub_raw = []  # raw depth
+		# uniqub_barcodes_raw = set()  # uni depth
+		# # ub_raw = []  # raw depth
 
-		for tupru in total_barcodes.values():
-			for sampleru in tupru:
-				ub_raw.append(sampleru)
-				uniqub_barcodes_raw.add(sampleru)
+		# for tupru in total_barcodes.values():
+		# 	# print(tupru)
+		# 	for sampleru in tupru:
+		# 		# ub_raw.append(sampleru)
+		# 		uniqub_barcodes_raw.add(sampleru)
+		# print("Use keys 1:")
+		uniqub_barcodes_raw = total_barcodes.keys()
+
 		# UB ====================================================================================================
 		logger.info("Consensus calc variant: {}\t{}\t{}\t{}\t{}\t{}\t{}".format(
 			self.chrm, self.start, self.end, self.ref, self.alt, self.gene, self.event))
 		d = {}
 		UBuniq_barcodes_raw = []
 		for utags in uniqub_barcodes_raw:
-			if utags in ub_counts['alt'] and utags in ub_counts['ref']:
-				# print 'both: ', utags)
-				unref = ub_counts['ref'].count(utags)
-				unalt = ub_counts['alt'].count(utags)
-				utotl = unref + unalt
-				un1ref = ub_counts['ref'].count(utags)
-				un1alt = ub_counts['alt'].count(utags)
-				ut1totl = un1ref + un1alt
-				if unref / utotl < float(0.75):
-					if unalt / utotl < float(0.75):
-						continue
-					else:
-						un1alt = 1
-						un1ref = 0
-						u1totl = un1ref + un1alt
-				else:
-					if unalt / utotl < float(0.75):
-						un1alt = 0
-						un1ref = 1
-						u1totl = un1ref + un1alt
-					else:
-						un1alt = 1  # this is sanity check in the final file
-						un1ref = 1  # if both are one then the code block failed
-						u1totl = un1ref + un1alt
-			else:
-				# uniq the ref UB barcode for vaf
-				# if an UB is not seen in both ref and alt bin
-				# meaning if a UB occurs more than once consider it only once
-				# i.e if UB has 5 [alt] and 0[ref]
-				# we would consider it 1[alt] and 0[ref]
-				un1ref = list(set(ub_counts['ref'])).count(utags)
-				# same stuff for alt UB barcodes
-				un1alt = list(set(ub_counts['alt'])).count(utags)
-				u1totl = un1ref + un1alt
-				# although we Uniq the UB's above we need to print out the actual number
-				# UB has 5 [alt] and 0[ref]
-				# print out the same number
-				unref = ub_counts['ref'].count(utags)
-				unalt = ub_counts['alt'].count(utags)
-				utotl = unref + unalt
+			# if utags in ub_counts['alt'] and utags in ub_counts['ref']:
+			# 	# print 'both: ', utags)
+			# 	unref = ub_counts['ref'][utags]
+			# 	unalt = ub_counts['alt'][utags]
+			# 	utotl = unref + unalt
+
+			# 	# un1ref = unref
+			# 	# un1alt = unalt
+			# 	# u1totl = utotl
+
+			# 	if unref / utotl < float(0.75):
+			# 		if unalt / utotl < float(0.75):
+			# 			continue
+			# 		else:
+			# 			un1alt = 1
+			# 			un1ref = 0
+			# 			u1totl = un1ref + un1alt
+			# 	else:
+			# 		if unalt / utotl < float(0.75):
+			# 			un1alt = 0
+			# 			un1ref = 1
+			# 			u1totl = un1ref + un1alt
+			# 		else:
+			# 			un1alt = 1  # this is sanity check in the final file
+			# 			un1ref = 1  # if both are one then the code block failed
+			# 			u1totl = un1ref + un1alt
+			# else:
+			# 	# uniq the ref UB barcode for vaf
+			# 	# if an UB is not seen in both ref and alt bin
+			# 	# meaning if a UB occurs more than once consider it only once
+			# 	# i.e if UB has 5 [alt] and 0[ref]
+			# 	# we would consider it 1[alt] and 0[ref]
+			# 	un1ref = list(set(ub_counts['ref'])).count(utags)
+			# 	# same stuff for alt UB barcodes
+			# 	un1alt = list(set(ub_counts['alt'])).count(utags)
+			# 	u1totl = un1ref + un1alt
+			# 	# although we Uniq the UB's above we need to print out the actual number
+			# 	# UB has 5 [alt] and 0[ref]
+			# 	# print out the same number
+			# 	unref = ub_counts['ref'].count(utags)
+			# 	unalt = ub_counts['alt'].count(utags)
+			# 	utotl = unref + unalt
+			unref = ub_counts['ref'][utags]
+			unalt = ub_counts['alt'][utags]
+			utotl = unref + unalt
+
+			un1alt = 1 if ((unref / utotl) < float(0.75)) else 0
+			un1ref = 1 if ((unalt / utotl) < float(0.75)) else 0
+			# u1totl = un1ref + un1alt
+
+			if un1alt == 1 and un1ref == 1:
+				print("Skipping ambigious - counts: Ref=%d, Alt=%d" % (unref,unalt))
+				continue
+
 
 			if un1alt:  # append only alt barcodes that have 1
 				UBuniq_barcodes_raw.append(utags)
